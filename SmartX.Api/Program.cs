@@ -372,7 +372,9 @@ app.MapMeshEndpoints();
 // START SMART-X API SERVER
 // ==========================================
 
+
 app.Run("http://localhost:5010");
+
 
 
 // ==========================================
