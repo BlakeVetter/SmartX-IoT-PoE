@@ -1,5 +1,1194 @@
-﻿<h3>Topology</h3>
+﻿
+@page "/topology"
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Routing
+@using SmartX.Shared
+@inject HttpClient Http
+@implements IDisposable
+
+<PageTitle>Smart-X | Mesh Network</PageTitle>
+
+<div class="mx-page">
+
+    <header class="mx-header">
+        <a class="mx-brand" href="/">
+            <span class="mx-logo">X</span>
+            <span>
+                SMART<span class="mx-green">-X</span>
+                <small>INTELLIGENT IOT ECOSYSTEM</small>
+            </span>
+        </a>
+
+        <span class="mx-connection">
+            <i class="mx-dot @(connected ? "online" : "")"></i>
+            @(connected ? "GATEWAY CONNECTED" : "GATEWAY OFFLINE")
+        </span>
+    </header>
+
+    <nav class="mx-nav">
+        <NavLink href="/" Match="NavLinkMatch.All">
+            01 / SENSOR INGESTION
+        </NavLink>
+        <NavLink href="/command-stream">
+            02 / COMMAND STREAM
+        </NavLink>
+        <NavLink href="/topology">
+            03 / NETWORK TOPOLOGY
+        </NavLink>
+    </nav>
+
+    <section class="mx-hero">
+        <div>
+            <span class="mx-eyebrow">
+                FINAL POE / GRAPH INTELLIGENCE
+            </span>
+
+            <h1>
+                Mesh Network
+                <span class="mx-green">Intelligence.</span>
+            </h1>
+
+            <p>
+                Visualise your distributed IoT ecosystem,
+                calculate optimal routes and simulate
+                automatic network self-healing.
+            </p>
+        </div>
+
+        <div class="mx-toolbar">
+            <button @onclick="RefreshAsync"
+                    disabled="@busy">
+                REFRESH
+            </button>
+
+            <button class="mx-primary"
+                    @onclick="ResetAsync"
+                    disabled="@busy">
+                RESET NETWORK
+            </button>
+        </div>
+    </section>
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="mx-error" role="alert">@error</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="mx-notice" role="status">@message</div>
+    }
+
+    <section class="mx-stats">
+        <div class="mx-stat">
+            <small>TOTAL NETWORK NODES</small>
+            <strong>@network.Nodes.Count</strong>
+            <span>Including central gateway</span>
+        </div>
+
+        <div class="mx-stat">
+            <small>ONLINE NODES</small>
+            <strong class="mx-green">
+                @network.OnlineCount
+            </strong>
+            <span>Currently available</span>
+        </div>
+
+        <div class="mx-stat">
+            <small>GATEWAY REACHABILITY</small>
+            <strong>@network.ConnectedCount</strong>
+            <span>Reachable nodes, gateway included</span>
+        </div>
+
+        <div class="mx-stat">
+            <small>MINIMUM SPANNING TREE</small>
+            <strong>
+                @network.MstTotalCost.ToString("0.0")
+            </strong>
+            <span>Combined simulated link cost</span>
+        </div>
+    </section>
+
+    <div class="mx-grid">
+
+        <section class="mx-panel">
+            <div class="mx-panel-title">
+                <div>
+                    <small>TOPOLOGY VISUALISATION</small>
+                    <h2>Active mesh network</h2>
+                </div>
+                <span class="mx-tag">DIJKSTRA + PRIM</span>
+            </div>
+
+            <p class="mx-muted">
+                Select any node to highlight its shortest
+                route to the central gateway.
+            </p>
+
+            <div class="mx-map">
+                <svg class="mx-edges"
+                     viewBox="0 0 1000 560"
+                     preserveAspectRatio="none"
+                     aria-hidden="true">
+
+                    <defs>
+                        <pattern id="mx-grid-pattern"
+                                 width="40"
+                                 height="40"
+                                 patternUnits="userSpaceOnUse">
+                            <path d="M 40 0 L 0 0 0 40"
+                                  fill="none"
+                                  stroke="#284054"
+                                  stroke-width="1" />
+                        </pattern>
+                    </defs>
+
+                    <rect width="1000"
+                          height="560"
+                          fill="url(#mx-grid-pattern)" />
+
+                    @foreach (var link in network.Links)
+                    {
+                        var from = FindNode(link.Source);
+                        var to = FindNode(link.Target);
+
+                        if (from is not null && to is not null)
+                        {
+                            <line x1="@from.X"
+                                  y1="@from.Y"
+                                  x2="@to.X"
+                                  y2="@to.Y"
+                                  class="@LinkClass(link)" />
+                        }
+                    }
+                </svg>
+
+                @foreach (var node in network.Nodes)
+                {
+                    <button type="button"
+                            class="mx-node @(node.IsGateway ? "gateway" : node.IsOnline ? "online" : "offline") @(selectedId == node.Id ? "selected" : "")"
+                            style="@NodePosition(node)"
+                            title="@node.Location"
+                            aria-label="@($"Select {node.Id}")"
+                            @onclick="() => SelectNodeAsync(node.Id)">
+
+                        <span class="mx-node-circle">
+                            @(node.IsGateway ? "G" :
+                              node.IsOnline ? "●" : "×")
+                        </span>
+
+                        <span class="mx-node-name">
+                            @node.Label
+                        </span>
+                    </button>
+                }
+            </div>
+
+            <div class="mx-legend">
+                <span><i class="mx-legend-dot green"></i> Online</span>
+                <span><i class="mx-legend-dot red"></i> Offline</span>
+                <span><i class="mx-legend-line green"></i> Shortest route</span>
+                <span><i class="mx-legend-line blue"></i> Spanning tree</span>
+                <span><i class="mx-legend-line grey"></i> Other links</span>
+            </div>
+        </section>
+
+        <section class="mx-panel">
+            <div class="mx-panel-title">
+                <div>
+                    <small>ROUTING ALGORITHM</small>
+                    <h2>Route inspector</h2>
+                </div>
+                <span class="mx-tag">DIJKSTRA</span>
+            </div>
+
+            <label class="mx-label">SELECT SOURCE NODE</label>
+
+            <select class="mx-select"
+                    @bind="selectedId"
+                    @bind:after="LoadRouteAsync">
+                @foreach (var node in network.Nodes)
+                {
+                    <option value="@node.Id">
+                        @node.Label — @(node.IsOnline ? "Online" : "Offline")
+                    </option>
+                }
+            </select>
+
+            @if (SelectedNode is not null)
+            {
+                <div class="mx-details">
+                    <strong>@SelectedNode.Id</strong>
+                    <small>@SelectedNode.Location</small>
+                    <small>@SelectedNode.Category</small>
+
+                    <span class="@(SelectedNode.IsOnline ? "mx-green" : "mx-red")">
+                        @(SelectedNode.IsOnline ? "● ONLINE" : "● OFFLINE")
+                    </span>
+                </div>
+
+                <div class="mx-route-result">
+                    <small>OPTIMAL PATH TO GATEWAY</small>
+
+                    @if (route.IsReachable)
+                    {
+                        <div class="mx-path">
+                            @string.Join(" → ", route.Path)
+                        </div>
+
+                        <div class="mx-route-numbers">
+                            <span>@route.Hops HOP(S)</span>
+                            <span>
+                                COST @route.TotalCost.ToString("0.0")
+                            </span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mx-unreachable">
+                            NO AVAILABLE ROUTE
+                        </div>
+
+                        <p class="mx-muted">
+                            The selected node is offline or
+                            disconnected from the gateway.
+                        </p>
+                    }
+                </div>
+
+                @if (!SelectedNode.IsGateway)
+                {
+                    <div class="mx-actions">
+                        @if (SelectedNode.IsOnline)
+                        {
+                            <button class="mx-fail"
+                                    disabled="@busy"
+                                    @onclick="() => ChangeStatusAsync(false)">
+                                SIMULATE NODE FAILURE
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="mx-restore"
+                                    disabled="@busy"
+                                    @onclick="() => ChangeStatusAsync(true)">
+                                RESTORE SELECTED NODE
+                            </button>
+                        }
+                    </div>
+                }
+            }
+
+            <p class="mx-muted mx-help">
+                Nodes are connected through weighted links.
+                The routing algorithm automatically excludes
+                offline devices when recalculating paths.
+            </p>
+        </section>
+    </div>
+
+    <div class="mx-grid mx-lower">
+
+        <section class="mx-panel">
+            <div class="mx-panel-title">
+                <div>
+                    <small>SENSOR DATA HISTORY</small>
+                    <h2>Selected device telemetry</h2>
+                </div>
+
+                <button class="mx-small-button"
+                        @onclick="SimulateAsync"
+                        disabled="@busy">
+                    + GENERATE READINGS
+                </button>
+            </div>
+
+            <p class="mx-muted">
+                Historical telemetry from the Part 1
+                sensor ingestion engine.
+            </p>
+
+            <div class="mx-table-wrap">
+                <table class="mx-table">
+                    <thead>
+                        <tr>
+                            <th>TIME</th>
+                            <th>METRIC</th>
+                            <th>TYPE</th>
+                            <th>VALUE</th>
+                            <th>STATUS</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @foreach (var reading in SelectedReadings)
+                        {
+                            <tr>
+                                <td>
+                                    @reading.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")
+                                </td>
+
+                                <td>@reading.Metric</td>
+                                <td>@reading.DataType</td>
+                                <td>@reading.DisplayValue</td>
+
+                                <td class="@(reading.IsAlert ? "mx-red" : "mx-green")">
+                                    @(reading.IsAlert ? "ALERT" : "NORMAL")
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (SelectedReadings.Count == 0)
+            {
+                <p class="mx-muted">
+                    No recorded readings for this node.
+                    Select a sensor or generate telemetry.
+                </p>
+            }
+        </section>
+
+        <section class="mx-panel">
+            <div class="mx-panel-title">
+                <div>
+                    <small>SELF-HEALING ACTIVITY</small>
+                    <h2>Network event history</h2>
+                </div>
+
+                <span class="mx-tag">LIVE LOG</span>
+            </div>
+
+            <div class="mx-events">
+                @foreach (var entry in network.Events.Take(12))
+                {
+                    <div class="mx-event">
+                        <span class="mx-event-icon @(entry.Type == "FAILURE" ? "failed" : "")">
+                            @(entry.Type == "FAILURE" ? "!" : "↗")
+                        </span>
+
+                        <div>
+                            <strong>@entry.Type</strong>
+                            <p>@entry.Message</p>
+                            <small>
+                                @entry.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")
+                            </small>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+    </div>
+
+    <footer class="mx-footer">
+        SMART-X / FINAL POE / MESH SIMULATION
+        <span>
+            Graph routing • MST • Node recovery • Auto refresh 5s
+        </span>
+    </footer>
+</div>
 
 @code {
 
+    private MeshSnapshot network = new(
+        new(), new(), new(),
+        0, 0, 0, DateTimeOffset.UtcNow);
+
+    private MeshRoute route = new(
+        "", "SMARTX-GATEWAY",
+        new(), 0, false, 0);
+
+    private DashboardSnapshot history = new(
+        new(), new(), new(),
+        0, 0, DateTimeOffset.UtcNow);
+
+    private string selectedId = "ESP32-VALVE-1";
+
+    private string message = "";
+    private string error = "";
+
+    private bool connected;
+    private bool busy;
+    private bool refreshing;
+
+    private CancellationTokenSource? cancellation;
+
+    private MeshNode? SelectedNode => FindNode(selectedId);
+
+    private MeshNode? FindNode(string id) =>
+        network.Nodes.FirstOrDefault(n =>
+            n.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+
+    private List<TelemetryReading> SelectedReadings =>
+        history.RecentReadings
+            .Where(r => r.DeviceId.Equals(
+                selectedId,
+                StringComparison.OrdinalIgnoreCase))
+            .Take(12)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+
+        cancellation = new CancellationTokenSource();
+        _ = PollAsync(cancellation.Token);
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        try
+        {
+            using var timer =
+                new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await RefreshAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (refreshing)
+            return;
+
+        refreshing = true;
+
+        try
+        {
+            var next = await Http.GetFromJsonAsync<MeshSnapshot>(
+                "api/mesh");
+
+            if (next is not null)
+                network = next;
+
+            var readings =
+                await Http.GetFromJsonAsync<DashboardSnapshot>(
+                    "api/dashboard");
+
+            if (readings is not null)
+                history = readings;
+
+            if (FindNode(selectedId) is null)
+            {
+                selectedId = network.Nodes
+                    .FirstOrDefault(n => !n.IsGateway)?.Id ?? "";
+            }
+
+            await LoadRouteAsync();
+
+            connected = true;
+            error = "";
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException or
+            System.Text.Json.JsonException)
+        {
+            connected = false;
+            error = "Cannot connect to the Smart-X API at localhost:5010.";
+        }
+        finally
+        {
+            refreshing = false;
+        }
+    }
+
+    private async Task LoadRouteAsync()
+    {
+        if (string.IsNullOrWhiteSpace(selectedId))
+            return;
+
+        try
+        {
+            var result =
+                await Http.GetFromJsonAsync<MeshRoute>(
+                    $"api/mesh/route/{Uri.EscapeDataString(selectedId)}");
+
+            if (result is not null)
+                route = result;
+        }
+        catch (HttpRequestException)
+        {
+            error = "Unable to retrieve the selected node route.";
+        }
+    }
+
+    private async Task SelectNodeAsync(string id)
+    {
+        selectedId = id;
+        await LoadRouteAsync();
+    }
+
+    private async Task ChangeStatusAsync(bool online)
+    {
+        if (SelectedNode is null || SelectedNode.IsGateway)
+            return;
+
+        busy = true;
+
+        try
+        {
+            using var response = await Http.PutAsJsonAsync(
+                $"api/mesh/nodes/{Uri.EscapeDataString(selectedId)}/status",
+                new MeshStatusRequest(online));
+
+            if (response.IsSuccessStatusCode)
+            {
+                message = online
+                    ? $"{selectedId} restored. Routes recalculated."
+                    : $"{selectedId} disconnected. Network self-healing activated.";
+
+                await RefreshAsync();
+            }
+            else
+            {
+                error = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            error = ex.Message;
+            connected = false;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private Task ResetAsync() =>
+        PostAndRefreshAsync(
+            "api/mesh/reset",
+            "All mesh devices restored successfully.");
+
+    private Task SimulateAsync() =>
+        PostAndRefreshAsync(
+            "api/simulate",
+            "New simulated sensor telemetry generated.");
+
+    private async Task PostAndRefreshAsync(
+        string endpoint,
+        string successMessage)
+    {
+        busy = true;
+
+        try
+        {
+            using var response =
+                await Http.PostAsync(endpoint, null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                message = successMessage;
+                await RefreshAsync();
+            }
+            else
+            {
+                error = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            connected = false;
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // Render markers as HTML buttons over an SVG line map.
+    // This avoids Razor's special handling of SVG text tags.
+    private static string NodePosition(MeshNode node) =>
+        FormattableString.Invariant(
+            $"left:{node.X / 10:0.##}%;top:{node.Y / 5.6:0.##}%;");
+
+    private string LinkClass(MeshLink link)
+    {
+        if (!link.IsActive)
+            return "mx-link disabled";
+
+        for (int i = 1; i < route.Path.Count; i++)
+        {
+            bool forward =
+                route.Path[i - 1] == link.Source &&
+                route.Path[i] == link.Target;
+
+            bool backward =
+                route.Path[i - 1] == link.Target &&
+                route.Path[i] == link.Source;
+
+            if (forward || backward)
+                return "mx-link selected-route";
+        }
+
+        return link.IsMstEdge
+            ? "mx-link mst"
+            : "mx-link normal";
+    }
+
+    public void Dispose()
+    {
+        cancellation?.Cancel();
+        cancellation?.Dispose();
+    }
 }
+
+<style>
+    .mx-page {
+        min-height: 100vh;
+        background: #080d17;
+        color: #edf5ff;
+        padding: 25px clamp(18px, 4vw, 60px);
+        font-family: 'Segoe UI', Arial, sans-serif;
+    }
+
+    .mx-page * {
+        box-sizing: border-box;
+    }
+
+    .mx-green { color: #b7ff4a; }
+    .mx-red { color: #ff8585; }
+
+    .mx-header, .mx-brand, .mx-nav, .mx-hero,
+    .mx-panel-title, .mx-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+    }
+
+    .mx-header {
+        border-bottom: 1px solid #283a4c;
+        padding-bottom: 22px;
+        flex-wrap: wrap;
+    }
+
+    .mx-brand {
+        justify-content: flex-start;
+        color: #edf5ff;
+        text-decoration: none;
+        font-size: 25px;
+        font-weight: 800;
+    }
+
+    .mx-brand small {
+        display: block;
+        font-size: 10px;
+        color: #8da2b7;
+        letter-spacing: 2px;
+    }
+
+    .mx-logo {
+        display: grid;
+        place-items: center;
+        width: 45px;
+        height: 45px;
+        background: #b7ff4a;
+        color: #080d17;
+        border-radius: 10px;
+        font-size: 27px;
+    }
+
+    .mx-connection {
+        font-size: 11px;
+        color: #a2b4c6;
+        letter-spacing: 1px;
+    }
+
+    .mx-dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 8px;
+        background: #ff8585;
+    }
+
+    .mx-dot.online { background: #b7ff4a; }
+
+    .mx-nav {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 28px;
+        padding: 19px 0;
+        border-bottom: 1px solid #283a4c;
+    }
+
+    .mx-nav a {
+        color: #8298ad;
+        font-size: 11px;
+        font-weight: 750;
+        text-decoration: none;
+    }
+
+    .mx-nav a.active,
+    .mx-nav a:hover {
+        color: #b7ff4a;
+    }
+
+    .mx-hero {
+        padding: 40px 0;
+        flex-wrap: wrap;
+    }
+
+    .mx-eyebrow, .mx-panel-title small {
+        color: #aedc85;
+        font-size: 11px;
+        letter-spacing: 1.4px;
+        font-weight: 700;
+    }
+
+    .mx-hero h1 {
+        font-size: clamp(34px, 4vw, 54px);
+        margin: 13px 0;
+        font-weight: 800;
+    }
+
+    .mx-hero p {
+        max-width: 670px;
+        color: #9aacc0;
+        line-height: 1.7;
+    }
+
+    .mx-toolbar {
+        display: flex;
+        gap: 10px;
+    }
+
+    .mx-toolbar button, .mx-small-button {
+        border: 1px solid #4c6977;
+        border-radius: 8px;
+        padding: 12px 16px;
+        background: #18303c;
+        color: #e9f5ff;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 800;
+    }
+
+    .mx-toolbar .mx-primary {
+        border: 0;
+        background: #b7ff4a;
+        color: #101a17;
+    }
+
+    .mx-page button:disabled {
+        opacity: .5;
+        cursor: not-allowed;
+    }
+
+    .mx-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 23px;
+    }
+
+    .mx-stat, .mx-panel {
+        background: linear-gradient(140deg, #152131, #0d1827);
+        border: 1px solid #2a3d51;
+        border-radius: 15px;
+    }
+
+    .mx-stat {
+        padding: 25px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .mx-stat small {
+        color: #9caec2;
+        font-size: 11px;
+        letter-spacing: .8px;
+    }
+
+    .mx-stat strong {
+        font-size: 36px;
+    }
+
+    .mx-stat span {
+        color: #8a9fb5;
+        font-size: 12px;
+    }
+
+    .mx-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(310px, .85fr);
+        gap: 22px;
+        margin-bottom: 22px;
+    }
+
+    .mx-lower {
+        grid-template-columns: minmax(0, 1.3fr) minmax(310px, .85fr);
+    }
+
+    .mx-panel {
+        padding: 24px;
+        min-width: 0;
+    }
+
+    .mx-panel-title {
+        align-items: flex-start;
+        margin-bottom: 18px;
+    }
+
+    .mx-panel-title h2 {
+        font-size: 21px;
+        margin: 7px 0 0;
+    }
+
+    .mx-tag {
+        color: #b8d9c8;
+        background: #163037;
+        border: 1px solid #395b61;
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-size: 10px;
+        white-space: nowrap;
+    }
+
+    .mx-muted {
+        color: #91a5bb;
+        font-size: 12px;
+        line-height: 1.7;
+    }
+
+    /* Interactive topology */
+    .mx-map {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1000 / 560;
+        min-height: 280px;
+        background: #0a1724;
+        border: 1px solid #2a4254;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-top: 18px;
+    }
+
+    .mx-edges {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+    }
+
+    .mx-link {
+        fill: none;
+        stroke-width: 2.5;
+        stroke: #52677c;
+    }
+
+    .mx-link.mst {
+        stroke: #58b6d9;
+        stroke-width: 3.5;
+    }
+
+    .mx-link.selected-route {
+        stroke: #b7ff4a;
+        stroke-width: 6;
+    }
+
+    .mx-link.disabled {
+        stroke: #573c47;
+        stroke-dasharray: 8 9;
+        opacity: .5;
+    }
+
+    .mx-node {
+        position: absolute;
+        transform: translate(-50%, -25%);
+        border: 0;
+        background: transparent;
+        color: #eaf4ff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 7px;
+        padding: 0;
+        cursor: pointer;
+        z-index: 2;
+    }
+
+    .mx-node-circle {
+        display: grid;
+        place-items: center;
+        width: 37px;
+        height: 37px;
+        background: #193e40;
+        border: 2px solid #b7ff4a;
+        color: #b7ff4a;
+        border-radius: 50%;
+        font-weight: 800;
+        font-size: 20px;
+        box-shadow: 0 0 15px #76be4630;
+    }
+
+    .mx-node.gateway .mx-node-circle {
+        width: 53px;
+        height: 53px;
+        background: #b7ff4a;
+        color: #0b1723;
+        font-size: 25px;
+    }
+
+    .mx-node.offline .mx-node-circle {
+        background: #492a34;
+        border-color: #ff8585;
+        color: #ff8585;
+    }
+
+    .mx-node.selected .mx-node-circle {
+        outline: 3px solid #ffffff88;
+        outline-offset: 5px;
+    }
+
+    .mx-node-name {
+        background: #101f30dd;
+        border: 1px solid #38536a;
+        border-radius: 5px;
+        padding: 4px 6px;
+        font-size: 10px;
+        font-weight: 700;
+        max-width: 120px;
+        overflow-wrap: anywhere;
+    }
+
+    .mx-legend {
+        display: flex;
+        gap: 17px;
+        flex-wrap: wrap;
+        padding-top: 18px;
+        font-size: 11px;
+        color: #a8b8cb;
+    }
+
+    .mx-legend-dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 5px;
+    }
+
+    .mx-legend-dot.green { background: #b7ff4a; }
+    .mx-legend-dot.red { background: #ff8585; }
+
+    .mx-legend-line {
+        display: inline-block;
+        width: 19px;
+        height: 3px;
+        vertical-align: middle;
+        margin-right: 5px;
+    }
+
+    .mx-legend-line.green { background: #b7ff4a; }
+    .mx-legend-line.blue { background: #58b6d9; }
+    .mx-legend-line.grey { background: #52677c; }
+
+    .mx-label {
+        display: block;
+        color: #98adc2;
+        font-size: 11px;
+        font-weight: 700;
+        margin: 18px 0 9px;
+    }
+
+    .mx-select {
+        width: 100%;
+        background: #0b1624;
+        border: 1px solid #38526a;
+        color: #f0f7ff;
+        padding: 13px;
+        border-radius: 8px;
+        font-size: 12px;
+    }
+
+    .mx-details {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 20px;
+        padding: 17px;
+        background: #102333;
+        border: 1px solid #2e4a5a;
+        border-radius: 9px;
+    }
+
+    .mx-details strong { font-size: 13px; }
+    .mx-details small { color: #9aacbf; }
+
+    .mx-route-result {
+        margin-top: 18px;
+        padding: 17px;
+        background: #111f2e;
+        border: 1px solid #2d455a;
+        border-radius: 9px;
+    }
+
+    .mx-route-result > small {
+        color: #acc79d;
+        font-size: 10px;
+        letter-spacing: 1px;
+    }
+
+    .mx-path {
+        color: #eaf8d4;
+        overflow-wrap: anywhere;
+        font-size: 13px;
+        font-weight: 750;
+        line-height: 1.8;
+        margin: 15px 0;
+    }
+
+    .mx-route-numbers {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 11px;
+        color: #b7ff4a;
+    }
+
+    .mx-unreachable {
+        margin-top: 15px;
+        color: #ff8585;
+        font-weight: 800;
+        font-size: 14px;
+    }
+
+    .mx-actions { margin-top: 18px; }
+
+    .mx-fail, .mx-restore {
+        width: 100%;
+        border: 0;
+        border-radius: 9px;
+        padding: 15px;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+
+    .mx-fail { background: #a83f52; }
+    .mx-restore { background: #28694d; }
+
+    .mx-help { margin-top: 18px; }
+
+    .mx-table-wrap { overflow-x: auto; }
+
+    .mx-table {
+        width: 100%;
+        min-width: 470px;
+        border-collapse: collapse;
+    }
+
+    .mx-table th, .mx-table td {
+        padding: 13px 9px;
+        border-bottom: 1px solid #293e51;
+        text-align: left;
+        font-size: 11px;
+    }
+
+    .mx-table th {
+        color: #93a8bb;
+        font-size: 10px;
+    }
+
+    .mx-table td { color: #dce8f5; }
+    .mx-table td.mx-green { color: #b7ff4a; }
+    .mx-table td.mx-red { color: #ff8585; }
+
+    .mx-events {
+        max-height: 390px;
+        overflow-y: auto;
+    }
+
+    .mx-event {
+        display: flex;
+        gap: 13px;
+        padding: 15px 0;
+        border-bottom: 1px solid #2a3e51;
+    }
+
+    .mx-event-icon {
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        background: #194239;
+        color: #b7ff4a;
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        font-weight: 800;
+    }
+
+    .mx-event-icon.failed {
+        background: #64313a;
+        color: #ff9ba2;
+    }
+
+    .mx-event strong {
+        color: #e9f5ff;
+        font-size: 12px;
+    }
+
+    .mx-event p {
+        color: #9eb0c5;
+        font-size: 12px;
+        line-height: 1.6;
+        margin: 6px 0;
+    }
+
+    .mx-event small {
+        font-size: 10px;
+        color: #758ba5;
+    }
+
+    .mx-notice, .mx-error {
+        padding: 14px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+    }
+
+    .mx-notice {
+        background: #14382c;
+        border: 1px solid #36745d;
+        color: #c4ffdd;
+    }
+
+    .mx-error {
+        background: #3a202b;
+        border: 1px solid #944559;
+        color: #ffd3d9;
+    }
+
+    .mx-footer {
+        border-top: 1px solid #293d50;
+        padding-top: 21px;
+        font-size: 11px;
+        color: #8298b0;
+        flex-wrap: wrap;
+    }
+
+    @@media (max-width: 1000px) {
+        .mx-grid, .mx-lower {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
